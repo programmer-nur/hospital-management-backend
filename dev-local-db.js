@@ -10,11 +10,14 @@
  * Data lives only for the lifetime of the process. On first boot the app's own
  * seeder creates admin@hospital.com / Abc1234#.
  */
-const { MongoMemoryServer } = require("mongodb-memory-server");
+// A single-node replica set, not a standalone: doctor creation wraps its
+// user+doctor inserts in a mongoose transaction, and transactions require a
+// replica set member.
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 (async () => {
-  const mongod = await MongoMemoryServer.create({
-    instance: { dbName: "hospital-management" },
+  const mongod = await MongoMemoryReplSet.create({
+    replSet: { count: 1, storageEngine: "wiredTiger" },
   });
 
   // Set before requiring the app: dotenv does not override existing env vars,

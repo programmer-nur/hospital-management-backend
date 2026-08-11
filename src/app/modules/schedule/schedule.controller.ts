@@ -863,7 +863,7 @@ const updateSchedulePreferences = async (req: Request, res: Response) => {
   }
 
   try {
-    await ScheduleGenerationService.updateDoctorPreferences(
+    const updated = await ScheduleGenerationService.updateDoctorPreferences(
       doctor._id.toString(),
       preferences
     );
@@ -872,7 +872,9 @@ const updateSchedulePreferences = async (req: Request, res: Response) => {
       statusCode: StatusCodes.OK,
       success: true,
       message: "Schedule preferences updated successfully",
-      data: null,
+      // Return what was actually persisted so the client can trust the result
+      // rather than assuming its payload was applied verbatim.
+      data: updated,
     });
   } catch (error) {
     console.error("Error updating preferences:", error);

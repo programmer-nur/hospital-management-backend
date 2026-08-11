@@ -30,8 +30,22 @@ export interface IDoctor extends Document {
   bio?: string;
   consultationFee: number;
   isAvailable: boolean;
+  /**
+   * Schedule generation preferences. Undefined means "use the service
+   * defaults", which is the case for every doctor created before this field
+   * was introduced.
+   */
+  schedulePreferences?: IDoctorSchedulePreferences;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IDoctorSchedulePreferences {
+  workingHours: { start: string; end: string };
+  slotDuration: number;
+  maxAppointmentsPerSlot: number;
+  workingDays: string[];
+  excludeWeekends: boolean;
 }
 
 export type DoctorModel = Model<IDoctor>;

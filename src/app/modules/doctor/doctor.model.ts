@@ -83,6 +83,23 @@ const doctorSchema = new Schema<IDoctor, DoctorModel>(
       type: Boolean,
       default: true,
     },
+    // Schedule generation preferences. Optional: when absent,
+    // ScheduleGenerationService falls back to its defaults, which preserves the
+    // behaviour of every doctor created before this field existed.
+    schedulePreferences: {
+      type: {
+        workingHours: {
+          start: { type: String, default: "09:00" },
+          end: { type: String, default: "17:00" },
+        },
+        slotDuration: { type: Number, default: 60 },
+        maxAppointmentsPerSlot: { type: Number, default: 2 },
+        workingDays: { type: [String], default: undefined },
+        excludeWeekends: { type: Boolean, default: true },
+      },
+      required: false,
+      default: undefined,
+    },
   },
   {
     timestamps: true,

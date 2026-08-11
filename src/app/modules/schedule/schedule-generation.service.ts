@@ -234,26 +234,67 @@ export class ScheduleGenerationService {
   }
 
   /**
-   * Get doctor's schedule preferences (could be extended to store in database)
+   * Get doctor's schedule preferences, falling back to the service defaults.
    */
   static async getDoctorPreferences(
     doctorId: string
   ): Promise<DoctorSchedulePreferences> {
-    // For now, return default preferences
-    // In the future, this could fetch from a doctor preferences collection
-    return this.DEFAULT_PREFERENCES;
+    // .lean() is required: spreading a mongoose subdocument copies its internal
+    // properties ($__, _doc, $isNew) instead of its values, which both leaks
+    // them into the API response and silently loses the stored values.
+    const doctor = await Doctor.findById(doctorId)
+      .select("schedulePreferences")
+      .lean();
+
+    const stored = doctor?.schedulePreferences;
+    const d = this.DEFAULT_PREFERENCES;
+
+    // Fields are picked explicitly rather than spread, so a stored `_id` never
+    // leaks into the response and the shape is guaranteed.
+    return {
+      workingHours: {
+        start: stored?.workingHours?.start ?? d.workingHours.start,
+        end: stored?.workingHours?.end ?? d.workingHours.end,
+      },
+      slotDuration: stored?.slotDuration ?? d.slotDuration,
+      maxAppointmentsPerSlot:
+        stored?.maxAppointmentsPerSlot ?? d.maxAppointmentsPerSlot,
+      workingDays: stored?.workingDays ?? d.workingDays,
+      excludeWeekends: stored?.excludeWeekends ?? d.excludeWeekends,
+    };
   }
 
   /**
-   * Update doctor's schedule preferences
+   * Persist doctor's schedule preferences.
+   *
+   * Merged against what is already stored so a partial update does not wipe
+   * unrelated keys.
    */
   static async updateDoctorPreferences(
     doctorId: string,
     preferences: Partial<DoctorSchedulePreferences>
-  ): Promise<void> {
-    // For now, just log the update
-    // In the future, this could save to a doctor preferences collection
-    console.log(`Updated preferences for doctor ${doctorId}:`, preferences);
+  ): Promise<DoctorSchedulePreferences> {
+    const current = await this.getDoctorPreferences(doctorId);
+    const merged: DoctorSchedulePreferences = {
+      ...current,
+      ...preferences,
+      workingHours: {
+        ...current.workingHours,
+        ...(preferences.workingHours ?? {}),
+      },
+    };
+
+    const updated = await Doctor.findByIdAndUpdate(
+      doctorId,
+      { $set: { schedulePreferences: merged } },
+      { new: true, runValidators: true }
+    );
+
+    if (!updated) {
+      throw new Error(`Doctor ${doctorId} not found`);
+    }
+
+    return merged;
   }
 
   /**
