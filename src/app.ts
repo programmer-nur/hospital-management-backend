@@ -33,6 +33,11 @@ app.use(cookieParser());
 app.use(
   cors({
     origin: ["http://localhost:3000"],
+    // Required for the refresh-token flow: the refresh token is delivered as an
+    // httpOnly cookie at login, and POST /auth/refresh-token reads it from
+    // req.cookies. Without this the browser will not send the cookie
+    // cross-origin and every refresh fails.
+    credentials: true,
   })
 );
 app.use(express.json());
