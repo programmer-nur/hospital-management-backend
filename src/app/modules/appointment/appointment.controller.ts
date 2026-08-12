@@ -357,6 +357,7 @@ const getMyAppointments = async (req: Request, res: Response) => {
     type,
     dateFrom,
     dateTo,
+    search,
     page = 1,
     limit = 10,
   } = req.query as any;
@@ -366,13 +367,37 @@ const getMyAppointments = async (req: Request, res: Response) => {
   // Build filter object
   const filter: any = { patient: patient._id };
 
-  if (status) filter.status = status;
+  // `status` accepts a comma-separated list so a caller can ask for, say,
+  // "scheduled,confirmed" in one request instead of paging twice.
+  if (status) {
+    const statuses = String(status)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    filter.status = statuses.length > 1 ? { $in: statuses } : statuses[0];
+  }
   if (type) filter.type = type;
 
   if (dateFrom || dateTo) {
     filter.appointmentDate = {};
     if (dateFrom) filter.appointmentDate.$gte = new Date(dateFrom);
     if (dateTo) filter.appointmentDate.$lte = new Date(dateTo);
+  }
+
+  // Free-text search across the fields the UI previously filtered client-side:
+  // the appointment's own reason/symptoms, plus the doctor's name, which lives
+  // on a referenced document and so needs its ids resolved first.
+  if (search) {
+    const pattern = { $regex: String(search), $options: "i" };
+    const doctorIds = await Doctor.find({
+      $or: [{ firstName: pattern }, { lastName: pattern }],
+    }).distinct("_id");
+
+    filter.$or = [
+      { reason: pattern },
+      { symptoms: pattern },
+      ...(doctorIds.length ? [{ doctor: { $in: doctorIds } }] : []),
+    ];
   }
 
   // Calculate pagination
