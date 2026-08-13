@@ -358,9 +358,15 @@ const getMyAppointments = async (req: Request, res: Response) => {
     dateFrom,
     dateTo,
     search,
+    sort,
     page = 1,
     limit = 10,
   } = req.query as any;
+
+  // Default newest-first. Callers showing "next N upcoming" need the opposite,
+  // otherwise a limit returns the furthest-away appointments rather than the
+  // soonest.
+  const sortDirection = String(sort).toLowerCase() === "asc" ? 1 : -1;
   const currentPage = Number(page);
   const pageSize = Number(limit);
 
@@ -406,7 +412,7 @@ const getMyAppointments = async (req: Request, res: Response) => {
   // Get appointments with pagination
   const appointments = await Appointment.find(filter)
     .populate("doctor", "firstName lastName specialization consultationFee")
-    .sort({ appointmentDate: -1, startTime: -1 })
+    .sort({ appointmentDate: sortDirection, startTime: sortDirection })
     .skip(skip)
     .limit(pageSize);
 
