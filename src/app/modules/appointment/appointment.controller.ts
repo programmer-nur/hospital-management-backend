@@ -1,3 +1,4 @@
+import mongoose, { ClientSession } from "mongoose";
 import { Request, Response } from "express";
 import { StatusCodes } from "http-status-codes";
 import { Appointment } from "./appointment.model";
@@ -18,6 +19,40 @@ import {
 import { toUtcDayStart, utcToday } from "../../shared/date";
 
 // Create a new appointment
+/**
+ * Move a slot's booked count by `delta` inside the caller's transaction.
+ *
+ * The counter is denormalised onto the schedule, so it only stays truthful if
+ * it moves in the same transaction as the appointment that caused the move.
+ * Previously each call site saved the appointment first and then updated the
+ * counter in a try/catch that swallowed failures — a failed counter update
+ * left a booked appointment whose capacity was never consumed, so the slot
+ * could be booked again beyond its limit.
+ *
+ * Clamped at zero: a double-decrement should not drive capacity negative.
+ */
+async function applySlotDelta(
+  scheduleId: any,
+  startTime: string,
+  endTime: string,
+  delta: number,
+  session: ClientSession
+): Promise<void> {
+  const schedule = await Schedule.findById(scheduleId).session(session);
+  if (!schedule) return;
+
+  const index = schedule.timeSlots.findIndex(
+    (slot: any) => slot.startTime === startTime && slot.endTime === endTime
+  );
+  if (index === -1) return;
+
+  const next = schedule.timeSlots[index].currentAppointments + delta;
+  schedule.timeSlots[index].currentAppointments = Math.max(0, next);
+  schedule.updateSlotAvailability();
+
+  await schedule.save({ session });
+}
+
 const createAppointment = async (req: Request, res: Response) => {
   const appointmentData: ICreateAppointment = req.body;
   const currentUser = req.user;
@@ -160,31 +195,26 @@ const createAppointment = async (req: Request, res: Response) => {
     isUrgent: appointmentData.isUrgent ?? false,
   });
 
-  const savedAppointment = await newAppointment.save();
-
-  // Update the schedule's currentAppointments count for the specific time slot
+  // The appointment and the slot counter must move together. If the counter
+  // cannot be updated the booking must not stand, or the slot is consumed in
+  // name only and can be overbooked.
+  const session = await mongoose.startSession();
   try {
-    const timeSlotIndex = schedule.timeSlots.findIndex(
-      (slot) =>
-        slot.startTime === appointmentData.startTime &&
-        slot.endTime === appointmentData.endTime
-    );
-
-    if (timeSlotIndex !== -1) {
-      schedule.timeSlots[timeSlotIndex].currentAppointments += 1;
-
-      // Update slot availability based on current appointments
-      schedule.updateSlotAvailability();
-
-      await schedule.save();
-      console.log(
-        `Updated schedule slot ${appointmentData.startTime}-${appointmentData.endTime} count to ${schedule.timeSlots[timeSlotIndex].currentAppointments}, isAvailable: ${schedule.timeSlots[timeSlotIndex].isAvailable}`
+    await session.withTransaction(async () => {
+      await newAppointment.save({ session });
+      await applySlotDelta(
+        schedule!._id,
+        appointmentData.startTime,
+        appointmentData.endTime,
+        1,
+        session
       );
-    }
-  } catch (error) {
-    console.error("Error updating schedule currentAppointments:", error);
-    // Don't fail the appointment creation if schedule update fails
+    });
+  } finally {
+    await session.endSession();
   }
+
+  const savedAppointment = newAppointment;
 
   // Populate related data for response
   await savedAppointment.populate([
@@ -696,39 +726,23 @@ const cancelAppointment = async (req: Request, res: Response) => {
     { path: "schedule", select: "date timeSlots isActive" },
   ]);
 
-  // Update the schedule's currentAppointments count for the specific time slot
+  // The status change and the counter must move together: a decrement that
+  // fails silently leaves the slot looking full after it has been freed.
+  const cancelSession = await mongoose.startSession();
   try {
-    if (updatedAppointment && updatedAppointment.schedule) {
-      const schedule = await Schedule.findById(updatedAppointment.schedule._id);
-      if (schedule) {
-        const timeSlotIndex = schedule.timeSlots.findIndex(
-          (slot) =>
-            slot.startTime === appointment.startTime &&
-            slot.endTime === appointment.endTime
+    await cancelSession.withTransaction(async () => {
+      if (updatedAppointment?.schedule) {
+        await applySlotDelta(
+          (updatedAppointment.schedule as any)._id,
+          appointment.startTime,
+          appointment.endTime,
+          -1,
+          cancelSession
         );
-
-        if (
-          timeSlotIndex !== -1 &&
-          schedule.timeSlots[timeSlotIndex].currentAppointments > 0
-        ) {
-          schedule.timeSlots[timeSlotIndex].currentAppointments -= 1;
-
-          // Update slot availability based on current appointments
-          schedule.updateSlotAvailability();
-
-          await schedule.save();
-          console.log(
-            `Updated schedule slot ${appointment.startTime}-${appointment.endTime} count to ${schedule.timeSlots[timeSlotIndex].currentAppointments}, isAvailable: ${schedule.timeSlots[timeSlotIndex].isAvailable} after cancellation`
-          );
-        }
       }
-    }
-  } catch (error) {
-    console.error(
-      "Error updating schedule currentAppointments after cancellation:",
-      error
-    );
-    // Don't fail the cancellation if schedule update fails
+    });
+  } finally {
+    await cancelSession.endSession();
   }
 
   sendResponse(res, {
@@ -748,42 +762,26 @@ const deleteAppointment = async (req: Request, res: Response) => {
     throw new NotFoundError("Appointment not found");
   }
 
-  // Update the schedule's currentAppointments count before deleting
+  // Delete and decrement together: dropping the appointment without freeing
+  // its slot would leave capacity permanently consumed by a record that no
+  // longer exists.
+  const deleteSession = await mongoose.startSession();
   try {
-    if (appointment.schedule) {
-      const schedule = await Schedule.findById(appointment.schedule._id);
-      if (schedule) {
-        const timeSlotIndex = schedule.timeSlots.findIndex(
-          (slot) =>
-            slot.startTime === appointment.startTime &&
-            slot.endTime === appointment.endTime
+    await deleteSession.withTransaction(async () => {
+      if (appointment.schedule) {
+        await applySlotDelta(
+          (appointment.schedule as any)._id,
+          appointment.startTime,
+          appointment.endTime,
+          -1,
+          deleteSession
         );
-
-        if (
-          timeSlotIndex !== -1 &&
-          schedule.timeSlots[timeSlotIndex].currentAppointments > 0
-        ) {
-          schedule.timeSlots[timeSlotIndex].currentAppointments -= 1;
-
-          // Update slot availability based on current appointments
-          schedule.updateSlotAvailability();
-
-          await schedule.save();
-          console.log(
-            `Updated schedule slot ${appointment.startTime}-${appointment.endTime} count to ${schedule.timeSlots[timeSlotIndex].currentAppointments}, isAvailable: ${schedule.timeSlots[timeSlotIndex].isAvailable} after deletion`
-          );
-        }
       }
-    }
-  } catch (error) {
-    console.error(
-      "Error updating schedule currentAppointments after deletion:",
-      error
-    );
-    // Don't fail the deletion if schedule update fails
+      await Appointment.findByIdAndDelete(id).session(deleteSession);
+    });
+  } finally {
+    await deleteSession.endSession();
   }
-
-  await Appointment.findByIdAndDelete(id);
 
   sendResponse(res, {
     statusCode: StatusCodes.OK,
