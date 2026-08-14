@@ -10,6 +10,14 @@ export default {
   port: process.env.PORT,
   database_url:
     process.env.DATABASE_URL ?? "mongodb://localhost:27017/nupem_db",
+  /**
+   * IANA timezone the clinic operates in, e.g. "Asia/Dhaka".
+   *
+   * Appointment `startTime` is a naive "HH:MM" string with no zone attached,
+   * so turning one into an actual instant requires knowing where the clinic
+   * is. Defaults to UTC, which preserves prior behaviour when unset.
+   */
+  clinic_timezone: process.env.CLINIC_TIMEZONE ?? "UTC",
   bcrypt_salt_rounds: 10,
   jwt_secret: process.env.JWT_SECRET,
   jwt_expire: "7d",

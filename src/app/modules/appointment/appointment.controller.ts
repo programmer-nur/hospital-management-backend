@@ -23,6 +23,8 @@ import {
 } from "../notification/notification.service";
 import { NotificationTemplate } from "../notification/notification.type";
 import { User } from "../user/user.model";
+import momentTz from "moment-timezone";
+import config from "../../config";
 
 // Create a new appointment
 /**
@@ -117,10 +119,17 @@ async function queueAppointmentNotifications(
       appointment: appointment._id,
     };
 
-    // Appointment start, in UTC, from the stored day plus the slot time.
-    const [hour, minute] = String(appointment.startTime).split(":").map(Number);
-    const startsAt = new Date(toUtcDayStart(appointment.appointmentDate));
-    startsAt.setUTCHours(hour || 0, minute || 0, 0, 0);
+    // `startTime` is a naive "HH:MM" with no zone, so it only becomes a real
+    // instant once interpreted in the clinic's timezone. Treating it as UTC
+    // shifts every reminder by the clinic's offset — for a UTC+6 clinic the
+    // "2 hours before" reminder landed four hours *after* the appointment.
+    const startsAt = momentTz
+      .tz(
+        `${toUtcDateKey(appointment.appointmentDate)} ${appointment.startTime}`,
+        "YYYY-MM-DD HH:mm",
+        config.clinic_timezone
+      )
+      .toDate();
 
     const now = new Date();
     const reminders: Array<[NotificationTemplate, Date]> = [
