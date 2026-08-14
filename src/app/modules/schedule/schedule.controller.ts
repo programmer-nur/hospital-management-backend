@@ -765,12 +765,21 @@ const generateSchedulesForDateRange = async (req: Request, res: Response) => {
   }
 
   try {
+    // Start from the doctor's saved preferences, then let anything supplied in
+    // the request override them. Passing req.body straight through meant a
+    // request without a `preferences` key silently fell back to the service
+    // defaults, so the preferences the doctor had saved were ignored.
+    const savedPreferences =
+      await ScheduleGenerationService.getDoctorPreferences(
+        doctor._id.toString()
+      );
+
     const schedules =
       await ScheduleGenerationService.generateSchedulesForDateRange(
         doctor._id.toString(),
         new Date(startDate),
         new Date(endDate),
-        preferences
+        { ...savedPreferences, ...(preferences ?? {}) }
       );
 
     sendResponse(res, {
