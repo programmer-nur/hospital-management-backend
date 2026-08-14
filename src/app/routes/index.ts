@@ -7,8 +7,17 @@ import ScheduleRoute from "../modules/schedule/schedule.route";
 import { AppointmentRoute } from "../modules/appointment/appointment.route";
 import { AdminRoute } from "../modules/admin/admin.route";
 import { NotificationRoute } from "../modules/notification/notification.route";
+import { AuditRoute } from "../modules/audit/audit.route";
+import auditLog from "../middlewares/audit";
 
 const router = express.Router();
+
+// Audit every API request.
+//
+// Registered before the module routers, which is safe: the entry is written on
+// the response's `finish` event, by which point each module's own `auth`
+// middleware has already populated req.user, so the entry is attributable.
+router.use(auditLog);
 
 const moduleRoutes = [
   {
@@ -42,6 +51,10 @@ const moduleRoutes = [
   {
     path: "/notifications",
     route: NotificationRoute,
+  },
+  {
+    path: "/audit",
+    route: AuditRoute,
   },
 ];
 
