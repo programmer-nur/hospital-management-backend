@@ -6,6 +6,7 @@ import { UserRoute } from "../modules/user/user.route";
 import ScheduleRoute from "../modules/schedule/schedule.route";
 import { AppointmentRoute } from "../modules/appointment/appointment.route";
 import { AdminRoute } from "../modules/admin/admin.route";
+import { NotificationRoute } from "../modules/notification/notification.route";
 
 const router = express.Router();
 
@@ -37,6 +38,10 @@ const moduleRoutes = [
   {
     path: "/admin",
     route: AdminRoute,
+  },
+  {
+    path: "/notifications",
+    route: NotificationRoute,
   },
 ];
 

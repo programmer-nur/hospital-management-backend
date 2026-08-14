@@ -16,7 +16,13 @@ import {
   IUpdateAppointment,
   ICancelAppointment,
 } from "./appointment.type";
-import { toUtcDayStart, utcToday } from "../../shared/date";
+import { toUtcDayStart, utcToday, toUtcDateKey } from "../../shared/date";
+import {
+  queueNotification,
+  cancelPendingForAppointment,
+} from "../notification/notification.service";
+import { NotificationTemplate } from "../notification/notification.type";
+import { User } from "../user/user.model";
 
 // Create a new appointment
 /**
@@ -51,6 +57,93 @@ async function applySlotDelta(
   schedule.updateSlotAvailability();
 
   await schedule.save({ session });
+}
+
+/**
+ * Resolve a patient's email address.
+ *
+ * Call sites populate `patient.user` inconsistently — sometimes as an id,
+ * sometimes as a document — so this normalises both rather than depending on
+ * the caller's populate shape. Getting this wrong makes the notification hooks
+ * silently no-op, which is indistinguishable from working.
+ */
+async function resolveRecipient(
+  patient: any
+): Promise<{ userId: any; email: string } | null> {
+  const user = patient?.user;
+  if (!user) return null;
+
+  if (typeof user === "object" && user.email) {
+    return { userId: user._id ?? user, email: user.email };
+  }
+
+  const doc = await User.findById(user).select("_id email");
+  return doc?.email ? { userId: doc._id, email: doc.email } : null;
+}
+
+/**
+ * Queue the confirmation and the two reminders for a new appointment.
+ *
+ * Runs after the booking transaction has committed and never throws into the
+ * request path: a reminder that cannot be queued must not fail a booking that
+ * already succeeded. Reminders in the past are skipped, so booking for later
+ * today does not immediately fire a "tomorrow" reminder.
+ */
+async function queueAppointmentNotifications(
+  appointment: any,
+  patient: any
+): Promise<void> {
+  try {
+    const recipient = await resolveRecipient(patient);
+    if (!recipient) return;
+
+    const doctor = appointment.doctor;
+    const payload = {
+      patientName: `${patient.firstName ?? ""} ${patient.lastName ?? ""}`.trim(),
+      doctorName: doctor?.firstName
+        ? `Dr. ${doctor.firstName} ${doctor.lastName}`
+        : undefined,
+      specialization: doctor?.specialization,
+      appointmentDate: toUtcDateKey(appointment.appointmentDate),
+      startTime: appointment.startTime,
+      endTime: appointment.endTime,
+      reason: appointment.reason,
+    };
+
+    const base = {
+      recipient: recipient.userId,
+      recipientAddress: recipient.email,
+      payload,
+      appointment: appointment._id,
+    };
+
+    // Appointment start, in UTC, from the stored day plus the slot time.
+    const [hour, minute] = String(appointment.startTime).split(":").map(Number);
+    const startsAt = new Date(toUtcDayStart(appointment.appointmentDate));
+    startsAt.setUTCHours(hour || 0, minute || 0, 0, 0);
+
+    const now = new Date();
+    const reminders: Array<[NotificationTemplate, Date]> = [
+      ["appointment_reminder_24h", new Date(startsAt.getTime() - 24 * 3600_000)],
+      ["appointment_reminder_2h", new Date(startsAt.getTime() - 2 * 3600_000)],
+    ];
+
+    await queueNotification({
+      ...base,
+      template: "appointment_confirmation",
+      scheduledFor: now,
+    });
+
+    for (const [template, when] of reminders) {
+      if (when <= now) continue;
+      await queueNotification({ ...base, template, scheduledFor: when });
+    }
+  } catch (error: any) {
+    console.error(
+      "[notifications] failed to queue for appointment:",
+      error?.message
+    );
+  }
 }
 
 const createAppointment = async (req: Request, res: Response) => {
@@ -225,6 +318,9 @@ const createAppointment = async (req: Request, res: Response) => {
     },
     { path: "schedule", select: "date timeSlots isActive" },
   ]);
+
+  // Fire-and-forget: notification failures must not affect the booking.
+  await queueAppointmentNotifications(savedAppointment, patient);
 
   sendResponse(res, {
     statusCode: StatusCodes.CREATED,
@@ -743,6 +839,35 @@ const cancelAppointment = async (req: Request, res: Response) => {
     });
   } finally {
     await cancelSession.endSession();
+  }
+
+  // Drop reminders for a visit that is no longer happening, then tell the
+  // patient it was cancelled.
+  try {
+    await cancelPendingForAppointment(appointment._id);
+
+    const recipient = await resolveRecipient(appointment.patient);
+    if (recipient) {
+      const doctor = appointment.doctor as any;
+      await queueNotification({
+        recipient: recipient.userId,
+        recipientAddress: recipient.email,
+        template: "appointment_cancelled",
+        appointment: appointment._id,
+        scheduledFor: new Date(),
+        payload: {
+          patientName: `${(appointment.patient as any).firstName ?? ""}`.trim(),
+          doctorName: doctor?.firstName
+            ? `Dr. ${doctor.firstName} ${doctor.lastName}`
+            : undefined,
+          appointmentDate: toUtcDateKey(appointment.appointmentDate),
+          startTime: appointment.startTime,
+          endTime: appointment.endTime,
+        },
+      });
+    }
+  } catch (error: any) {
+    console.error("[notifications] cancel hook failed:", error?.message);
   }
 
   sendResponse(res, {
