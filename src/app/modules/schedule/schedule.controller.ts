@@ -13,6 +13,7 @@ import {
 } from "./schedule.validation";
 import CustomAPIError from "../../errors/custom-api";
 import NotFoundError from "../../errors/not-found";
+import { toUtcDayStart } from "../../shared/date";
 
 // Create a new schedule
 const createSchedule = async (req: Request, res: Response) => {
@@ -188,8 +189,7 @@ const checkScheduleExists = async (req: Request, res: Response) => {
   }
 
   // Check if schedule exists for this doctor and date (including inactive schedules)
-  // Parse date in UTC to match how dates are stored in the database
-  const targetDate = new Date(date + "T00:00:00.000Z");
+  const targetDate = toUtcDayStart(date);
 
   console.log(
     `Checking schedule for doctor: ${

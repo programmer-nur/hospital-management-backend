@@ -1,5 +1,6 @@
 import { Schedule } from "./schedule.model";
 import { Doctor } from "../doctor/doctor.model";
+import { toUtcDayStart } from "../../shared/date";
 
 export interface ScheduleTemplate {
   startTime: string;
@@ -131,8 +132,7 @@ export class ScheduleGenerationService {
     preferences?: Partial<DoctorSchedulePreferences>
   ): Promise<any> {
     try {
-      const targetDate = new Date(date);
-      targetDate.setHours(0, 0, 0, 0);
+      const targetDate = toUtcDayStart(date);
 
       // Check if schedule already exists
       const existingSchedule = await Schedule.findOne({

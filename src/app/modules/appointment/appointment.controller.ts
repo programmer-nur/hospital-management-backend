@@ -15,6 +15,7 @@ import {
   IUpdateAppointment,
   ICancelAppointment,
 } from "./appointment.type";
+import { toUtcDayStart, utcToday } from "../../shared/date";
 
 // Create a new appointment
 const createAppointment = async (req: Request, res: Response) => {
@@ -63,12 +64,10 @@ const createAppointment = async (req: Request, res: Response) => {
   }
 
   // Normalize and validate the appointment date
-  const appointmentDate = new Date(appointmentData.appointmentDate);
-  appointmentDate.setHours(0, 0, 0, 0);
+  const appointmentDate = toUtcDayStart(appointmentData.appointmentDate);
 
   // Validate date constraints
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = utcToday();
 
   if (appointmentDate < today) {
     throw new CustomAPIError(
@@ -809,8 +808,7 @@ const getPatientAppointmentsForDate = async (req: Request, res: Response) => {
     throw new NotFoundError("Patient profile not found");
   }
 
-  const targetDate = new Date(date);
-  targetDate.setHours(0, 0, 0, 0);
+  const targetDate = toUtcDayStart(date);
 
   // Get patient's appointments for the specific date
   const appointments = await Appointment.find({

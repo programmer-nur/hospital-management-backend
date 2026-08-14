@@ -1,5 +1,6 @@
 import { Schema, model } from "mongoose";
 import { ISchedule, ScheduleModel, ITimeSlot } from "./schedule.type";
+import { toUtcDayStart, utcToday } from "../../shared/date";
 
 // Time slot schema
 const timeSlotSchema = new Schema<ITimeSlot>({
@@ -87,10 +88,8 @@ scheduleSchema.virtual("availableSlotsCount").get(function () {
 // Pre-save middleware to validate time slots
 scheduleSchema.pre("save", function (next) {
   // Validate date is not in the past
-  const scheduleDate = new Date(this.date);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  scheduleDate.setHours(0, 0, 0, 0);
+  const scheduleDate = toUtcDayStart(this.date);
+  const today = utcToday();
 
   if (scheduleDate < today) {
     return next(new Error("Cannot create schedule for past dates"));
@@ -137,8 +136,7 @@ scheduleSchema.statics.findByDoctorAndDate = async function (
   doctorId: string,
   date: Date
 ) {
-  const targetDate = new Date(date);
-  targetDate.setHours(0, 0, 0, 0);
+  const targetDate = toUtcDayStart(date);
 
   return await this.findOne({
     doctor: doctorId,
@@ -152,9 +150,7 @@ scheduleSchema.statics.getAvailableSlots = async function (
   doctorId: string,
   date: string
 ) {
-  // Parse date in UTC to match how dates are stored in the database
-  // Format: "2025-10-21" should match "2025-10-21T00:00:00.000Z" in DB
-  const targetDate = new Date(date + "T00:00:00.000Z");
+  const targetDate = toUtcDayStart(date);
 
   console.log(`[getAvailableSlots] Looking for schedule:`, {
     doctorId,
@@ -205,8 +201,7 @@ scheduleSchema.statics.createDefaultSchedule = async function (
   doctorId: string,
   date: Date
 ) {
-  const targetDate = new Date(date);
-  targetDate.setHours(0, 0, 0, 0);
+  const targetDate = toUtcDayStart(date);
 
   // Check if schedule already exists
   const existingSchedule = await this.findOne({

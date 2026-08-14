@@ -1,5 +1,6 @@
 import { Schema, model } from "mongoose";
 import { IAppointment, AppointmentModel } from "./appointment.type";
+import { toUtcDayStart, utcToday } from "../../shared/date";
 
 // mongoose appointment schema
 const appointmentSchema = new Schema<IAppointment, AppointmentModel>(
@@ -24,7 +25,10 @@ const appointmentSchema = new Schema<IAppointment, AppointmentModel>(
       required: [true, "Appointment date is required"],
       validate: {
         validator: function (value: Date) {
-          return value >= new Date(new Date().setHours(0, 0, 0, 0));
+          // Compared in UTC because appointmentDate is stored as UTC day
+          // start; using local midnight rejected valid same-day bookings for
+          // any server running ahead of UTC.
+          return value >= utcToday();
         },
         message: "Appointment date cannot be in the past",
       },
@@ -212,8 +216,7 @@ appointmentSchema.statics.checkSlotAvailability = async function (
   excludeAppointmentId?: string,
   patientId?: string
 ) {
-  const targetDate = new Date(appointmentDate);
-  targetDate.setHours(0, 0, 0, 0);
+  const targetDate = toUtcDayStart(appointmentDate);
 
   // Find the schedule for this doctor and date
   const { Schedule } = await import("../schedule/schedule.model");
@@ -321,10 +324,9 @@ appointmentSchema.statics.getAppointmentStats = async function (
     if (dateTo) filter.appointmentDate.$lte = dateTo;
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = utcToday();
   const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
   const [
     totalAppointments,
